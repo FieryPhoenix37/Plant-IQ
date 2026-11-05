@@ -123,3 +123,19 @@ def test_label_versions_picks_lower_block(monkeypatch):
 
     tied = zenodo.label_versions(lf.with_columns(n_infected=pl.lit(7))).collect()
     assert tied.filter(R0=1.5)["version"].to_list() == ["canonical"] * 2 + ["inflated"] * 2
+
+
+def test_pairwise_sign_and_significance():
+    """ln(mean_col / mean_row): negative when the column group has smaller outbreaks."""
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    lf = pl.LazyFrame({
+        "g": ["big"] * 200 + ["small"] * 200,
+        "frac_endo": np.r_[rng.uniform(0.2, 0.4, 200), rng.uniform(0.05, 0.1, 200)],
+    })
+    pw = zenodo.pairwise(lf, ["g"], "school")
+    cell = {(r["row_g"], r["col_g"]): r for r in pw.iter_rows(named=True)}
+    assert cell[("big", "small")]["log_ratio"] < 0 < cell[("small", "big")]["log_ratio"]
+    assert cell[("big", "small")]["p_value"] < 0.01
+    assert cell[("big", "big")]["log_ratio"] == 0 and cell[("big", "big")]["p_value"] == 1.0

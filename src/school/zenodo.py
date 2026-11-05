@@ -33,6 +33,7 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -312,15 +313,23 @@ def anomalies(school: School) -> dict[str, int]:
     return {k: int(v) for k, v in row.row(0, named=True).items()}
 
 
-def baseline(lf: pl.LazyFrame, school: School) -> pl.LazyFrame:
-    """Pin the dimensions the paper holds fixed in Figs. 3-5."""
+def baseline(lf: pl.LazyFrame, school: School, vaccination: bool = False) -> pl.LazyFrame:
+    """Pin the dimensions the paper holds fixed in Figs. 3-6.
+
+    With ``vaccination=True`` (Fig. 7), also keep runs where all teachers/staff are vaccinated with a
+    vaccine that blocks transmission (``vaccine_transmissibility_factor == 0``; the caption says
+    effective vaccinations block both disease and transmission).
+    """
+    vaccine = pl.col("teacher_vaccine") == 0
+    if vaccination:
+        vaccine = vaccine | ((pl.col("teacher_vaccine") == 1) & (pl.col("vaccine_transmissibility_factor") == 0))
     return lf.filter(
         pl.col("version") == "canonical",
         (pl.col("susceptibility") - school.susceptibility).abs() < 1e-6,
         pl.col("classroom_isolation") == 0,
         pl.col("contact_isolation") == 0,
-        pl.col("teacher_vaccine") == 0,
         pl.col("student_vaccine") == 0,
+        vaccine,
     )
 
 
@@ -329,12 +338,13 @@ def baseline(lf: pl.LazyFrame, school: School) -> pl.LazyFrame:
 # --------------------------------------------------------------------------------------------
 
 def summarize(lf: pl.LazyFrame, by: list[str], outcome: str) -> pl.DataFrame:
-    """Per-group n, median, 95th percentile (linear interpolation, as numpy) and % runs > 5%."""
+    """Per-group n, mean, median, 95th percentile (linear interpolation, as numpy), % runs > 5%."""
     col = pl.col(OUTCOMES[outcome])
     return (
         lf.group_by(by)
         .agg(
             n=pl.len(),
+            mean=col.mean(),
             median=col.median(),
             p95=col.quantile(0.95, interpolation="linear"),
             pct_gt5=(col > SIZABLE_OUTBREAK).mean() * 100,
@@ -366,13 +376,23 @@ FIGURES = {
         filters={}, R0=None,
         by=["R0", "intro", "cohorting", "testing"], outcomes=["students", "teachers_staff"],
     ),
+    # Fig. 6: R0 1.5, weekly introductions, individual quarantine; cohorting x testing (means)
+    "fig6_pairwise": dict(
+        filters=dict(intro="weekly"), R0=[1.5],
+        by=["R0", "cohorting", "testing"], outcomes=["school"],
+    ),
+    # Fig. 7: R0 1.5, weekly introductions, no testing; no vaccine vs all teachers/staff vaccinated
+    "fig7_jitter": dict(
+        filters=dict(intro="weekly", testing="none"), R0=[1.5], vaccination=True,
+        by=["R0", "cohorting", "teacher_vaccine"], outcomes=["students", "teachers_staff"],
+    ),
 }
 
 
 def figure_frame(school: School, figure: str) -> pl.LazyFrame:
     """Baseline-filtered rows for one figure (shared by targets() and the plotting code)."""
     spec = FIGURES[figure]
-    lf = baseline(load(school), school)
+    lf = baseline(load(school), school, vaccination=spec.get("vaccination", False))
     if spec["filters"]:
         lf = lf.filter(**spec["filters"])
     if spec["R0"] is not None:
@@ -391,9 +411,34 @@ def targets(schools: list[School]) -> pl.DataFrame:
                 if summary.is_empty():
                     raise ValueError(f"{school.name}/{figure}: no rows match the figure's filters")
                 frames.append(summary.with_columns(figure=pl.lit(figure), school=pl.lit(school.name)))
-    keys = ["figure", "school", "outcome", "R0", "intro", "cohorting", "testing"]
+    keys = ["figure", "school", "outcome", "R0", "intro", "cohorting", "testing", "teacher_vaccine"]
     df = pl.concat(frames, how="diagonal_relaxed")
     return df.select(*keys, pl.exclude(keys)).sort(keys, nulls_last=True)
+
+
+def pairwise(lf: pl.LazyFrame, by: list[str], outcome: str) -> pl.DataFrame:
+    """Fig. 6: every ordered pair of groups -> ln(mean_col / mean_row) and two-sided Mann-Whitney U p.
+
+    Negative log-ratio = the column intervention has smaller mean outbreaks than the row one.
+    """
+    from scipy.stats import mannwhitneyu
+
+    col = OUTCOMES[outcome]
+    groups = {
+        tuple(k): g[col].to_numpy()
+        for k, g in lf.select(*by, col).collect().group_by(by, maintain_order=True)
+    }
+    rows = []
+    for row_key, a in groups.items():
+        for col_key, b in groups.items():
+            p = 1.0 if row_key == col_key else mannwhitneyu(b, a, alternative="two-sided").pvalue
+            rows.append({
+                **{f"row_{k}": v for k, v in zip(by, row_key)},
+                **{f"col_{k}": v for k, v in zip(by, col_key)},
+                "log_ratio": float(np.log(b.mean() / a.mean())),
+                "p_value": float(p),
+            })
+    return pl.DataFrame(rows)
 
 
 # --------------------------------------------------------------------------------------------

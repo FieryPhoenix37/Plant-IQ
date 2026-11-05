@@ -20,6 +20,7 @@ from .zenodo import (
     TESTING_ORDER,
     School,
     figure_frame,
+    pairwise,
     summarize,
 )
 
@@ -40,8 +41,9 @@ TESTING_LABELS = {
 }
 
 
-def jitter(ax, lf: pl.LazyFrame, by: str, order: list[str], labels: dict | None = None,
-           outcome: str = "school", seed: int = 0) -> None:
+def jitter(ax, lf: pl.LazyFrame, by: str, order: list, labels: dict | None = None,
+           outcome: str = "school", seed: int = 0,
+           ylabel: str = "School transmission cases\n(% of school population)") -> None:
     """One jitter column per category: points, median (black), 95th pct (orange), % runs > 5% below."""
     rng = np.random.default_rng(seed)
     col = OUTCOMES[outcome]
@@ -55,13 +57,13 @@ def jitter(ax, lf: pl.LazyFrame, by: str, order: list[str], labels: dict | None 
         s = stats[cat]
         ax.hlines(s["median"] * 100, i - 0.35, i + 0.35, color=MEDIAN_COLOR, lw=2)
         ax.hlines(s["p95"] * 100, i - 0.35, i + 0.35, color=P95_COLOR, lw=2)
-        ax.annotate(f"{s['pct_gt5']:.1f}%", (i, 0), xytext=(0, -28), textcoords="offset points",
-                    xycoords=("data", "axes fraction"), ha="center", fontsize=9)
 
     ax.axhline(SIZABLE_OUTBREAK * 100, color="gray", ls="--", lw=1)
-    ax.set_xticks(range(len(order)), [(labels or {}).get(c, c) for c in order])
+    # % of runs > 5% goes in the tick label (as printed under each column in the paper)
+    ticks = [f"{(labels or {}).get(c, c)}\n{stats[c]['pct_gt5']:.1f}%" for c in order]
+    ax.set_xticks(range(len(order)), ticks)
     ax.set_xlim(-0.6, len(order) - 0.4)
-    ax.set_ylabel("School transmission cases\n(% of school population)")
+    ax.set_ylabel(ylabel)
 
 
 def heatmap(ax, table: pl.DataFrame, rows: list[str], cols: list[str], row_order, col_order,
@@ -88,7 +90,7 @@ def fig3_jitter(school: School) -> Path:
     for ax, r0 in zip(np.atleast_1d(axes), r0s):
         jitter(ax, lf.filter(pl.col("R0") == r0), "intro", INTRO_ORDER)
         ax.set_title(f"{school.name.title()} school, R0 = {r0}")
-        ax.set_xlabel("Introduction rate", labelpad=22)
+        ax.set_xlabel("Introduction rate")
     # Only after every panel is drawn: setting limits earlier freezes the shared y-axis.
     np.atleast_1d(axes)[0].set_ylim(bottom=-1)
     return _save(fig, f"fig3_jitter_{school.name}.png")
@@ -99,7 +101,7 @@ def fig5_jitter(school: School) -> Path:
     fig, ax = plt.subplots(figsize=(5.5, 4.5))
     jitter(ax, lf, "cohorting", COHORTING_ORDER, COHORTING_LABELS)
     ax.set_title(f"{school.name.title()} school, R0 = 1.5, weekly introductions, no testing")
-    ax.set_xlabel("Cohorting", labelpad=22)
+    ax.set_xlabel("Cohorting")
     ax.set_ylim(bottom=-1)
     return _save(fig, f"fig5_jitter_{school.name}.png")
 
@@ -132,8 +134,96 @@ def fig4_heatmap(school: School) -> Path:
     return _save(fig, f"fig4_heatmap_{school.name}.png")
 
 
+def fig6_pairwise(school: School) -> Path:
+    """Pairwise ln(mean outbreak size) ratios, column vs row, with Mann-Whitney U significance."""
+    keys = [(c, t) for c in COHORTING_ORDER for t in TESTING_ORDER]
+    pw = pairwise(figure_frame(school, "fig6_pairwise"), ["cohorting", "testing"], "school")
+    cell = {((r["row_cohorting"], r["row_testing"]), (r["col_cohorting"], r["col_testing"])): r
+            for r in pw.iter_rows(named=True)}
+    grid = np.array([[cell[(rk, ck)]["log_ratio"] for ck in keys] for rk in keys])
+    lim = np.nanmax(np.abs(grid))
+
+    fig, ax = plt.subplots(figsize=(9, 8))
+    im = ax.imshow(grid, cmap="RdBu_r", vmin=-lim, vmax=lim)
+    for i, rk in enumerate(keys):
+        for j, ck in enumerate(keys):
+            p = cell[(rk, ck)]["p_value"]
+            mark = "**" if p < 0.01 else "*" if p < 0.05 else ""
+            if mark and i != j:
+                ax.text(j, i, mark, ha="center", va="center", fontsize=7)
+    label = [f"{COHORTING_LABELS[c]} / {TESTING_LABELS[t]}" for c, t in keys]
+    ax.set_xticks(range(len(keys)), label, rotation=90, fontsize=7)
+    ax.set_yticks(range(len(keys)), label, fontsize=7)
+    ax.set_title(f"{school.name.title()}: ln(mean outbreak size, column / row)\n"
+                 "R0 = 1.5, weekly introductions; ** p < 0.01, * p < 0.05 (Mann-Whitney U)", fontsize=10)
+    fig.colorbar(im, ax=ax, shrink=0.8, label="blue: column better, red: column worse")
+    return _save(fig, f"fig6_pairwise_{school.name}.png")
+
+
+def fig7_jitter(school: School) -> Path:
+    """No vaccination vs all teachers/staff vaccinated, by cohorting, students and teachers+staff."""
+    lf = figure_frame(school, "fig7_jitter").with_columns(
+        group=pl.format("{}|{}", pl.col("cohorting"), pl.col("teacher_vaccine").cast(pl.Int8))
+    )
+    order = [f"{c}|{v}" for c in COHORTING_ORDER for v in (0, 1)]
+    labels = {f"{c}|{v}": f"{COHORTING_LABELS[c]}\n{'vaccinated' if v else 'unvaccinated'}"
+              for c in COHORTING_ORDER for v in (0, 1)}
+    fig, axes = plt.subplots(2, 1, figsize=(10, 9.5), constrained_layout=True)
+    for ax, outcome, who in zip(axes, ["students", "teachers_staff"], ["students", "teachers + staff"]):
+        jitter(ax, lf, "group", order, labels, outcome=outcome,
+               ylabel=f"School transmission cases\n(% of {who})")
+        ax.tick_params(axis="x", labelsize=8)
+        ax.set_ylim(bottom=-1)
+        ax.set_title(f"{school.name.title()}: {who} (R0 = 1.5, weekly introductions, no testing)", fontsize=10)
+    return _save(fig, f"fig7_jitter_{school.name}.png")
+
+
+def fig2_network(school: School, seed: int = 1) -> Path:
+    """Example contact network on a day when only student cohort 1 is on campus (Fig. 2C/D).
+
+    Illustrative: uses the upstream generators with their default settings, which are not yet fitted
+    to the Zenodo network statistics (Part 1B).
+    """
+    import networkx as nx
+
+    from .seirsplus_k12.networks import generate_highschool_contact_network, generate_K5_school_contact_network
+
+    np.random.seed(seed)  # upstream generators use the global numpy RNG
+    if school.name == "primary":
+        nets, info = generate_K5_school_contact_network(
+            num_grades=6, num_classrooms_per_grade=4, class_sizes=20, num_student_blocks=2, num_staff=24)
+    else:
+        nets, info = generate_highschool_contact_network(num_student_blocks=2)
+    G = nets["onsite-block1"].copy()
+    # The K-5 generator leaves weight-0 self-loops (stored zeros from scipy block_diag); not contacts.
+    G.remove_edges_from(list(nx.selfloop_edges(G)))
+    pos = nx.spring_layout(G, weight="layout_weight", seed=seed, iterations=60)
+
+    role = np.array(info["node_labels"])
+    grade = {s: g for g, ids in info["grades_studentIDs"].items() for s in ids}
+    offsite = {s for s, b in info["studentIDs_studentBlocks"].items() if b != 1}
+    blues = plt.get_cmap("Blues")
+    colors = []
+    for n in G.nodes():
+        if role[n] == "student":
+            colors.append(blues(0.45 + 0.5 * grade[n] / max(grade.values())))
+        else:
+            colors.append("tab:green" if role[n] == "teacher" else "gold")
+
+    fig, ax = plt.subplots(figsize=(7, 7))
+    nx.draw_networkx_edges(G, pos, ax=ax, edge_color="lightgray", alpha=0.25, width=0.3)
+    nx.draw_networkx_nodes(G, pos, ax=ax, node_size=[6 if n in offsite else 10 for n in G.nodes()],
+                           node_color=colors, linewidths=0)
+    ax.set_title(f"{school.name.title()} school, cohort 1 on campus\n"
+                 "blue: students (shade = grade), green: teachers, yellow: staff;\n"
+                 "peripheral nodes: off-campus cohort (household edges only)", fontsize=9)
+    ax.set_axis_off()
+    return _save(fig, f"fig2_network_{school.name}.png")
+
+
 def make_all(school: School) -> list[Path]:
-    return [f(school) for f in (fig3_jitter, fig3_heatmap, fig4_heatmap, fig5_jitter)]
+    figs = (fig2_network, fig3_jitter, fig3_heatmap, fig4_heatmap, fig5_jitter, fig6_pairwise, fig7_jitter)
+    return [f(school) for f in figs]
 
 
 def _save(fig, name: str) -> Path:

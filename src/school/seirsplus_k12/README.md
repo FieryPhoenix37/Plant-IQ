@@ -38,6 +38,12 @@ These are left unfixed so simulations match what the authors ran. Fix them only 
    advance by the uncapped `tau` rather than `max_dt`, so isolation can end early.
 5. `models.py` L~899-900: quarantine `delta_Q` pairwise terms transpose in the opposite order to the
    non-quarantine `delta` terms (L~873-874). Possibly intentional; unverified.
+6. `generate_K5_school_contact_network`: `scipy.sparse.block_diag` keeps each classroom block's zero
+   diagonal as stored entries, which networkx turns into weight-0 self-loops (one per student; 1 in
+   the high-school generator). Transmission is unaffected (the model adjacency diagonal is 0), but
+   networkx degree counts each loop as +2 (student degree 22.5 with, 20.5 without vs Zenodo ~19.5).
+   Exclude self-loops when comparing to the Zenodo degree statistics. Whether the authors' 2020
+   scipy/networkx did the same is unknown.
 
 The Zenodo output records per-run network statistics (`degree_mean_students`, `cluster_coeff`, ...),
 so whether the published runs used this exact generator code can be tested directly.
