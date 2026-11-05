@@ -1,0 +1,38 @@
+[project]
+name = "plant-iq"
+version = "0.1.0"
+description = "Network epidemic models for grapevine red blotch virus and optimized roguing / replanting policies"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "polars",
+    "duckdb",
+    "pyarrow",
+    "matplotlib",
+    "seaborn",
+    "networkx",
+    "joblib",
+]
+
+[project.optional-dependencies]
+# Part 1B: school model replication on public SEIRS+ v1.0
+school = ["seirsplus==1.0.9"]
+# Parts 3-4: sensitivity analysis and policy optimization
+optimize = ["SALib", "optuna", "cma"]
+dev = ["pytest", "ruff", "jupyterlab"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100

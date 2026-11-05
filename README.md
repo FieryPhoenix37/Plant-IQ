@@ -3,3 +3,26 @@ A research project with Sam Brown. Fit models of how plant disease spreads (incl
 
 Paper that could act as a template for the work discussed:
 https://www.pnas.org/doi/full/10.1073/pnas.2108909118.
+
+## Setup
+
+```bash
+uv venv && source .venv/bin/activate
+uv pip install -e ".[dev,optimize]"     # add ",school" for the seirsplus replication (Part 1B)
+pytest
+```
+
+Zenodo data (10.5281/zenodo.5237328) goes in `data/` (gitignored). See `PROJECT_PLAN.md` for the full plan.
+
+## Layout
+
+```
+data/          Zenodo downloads (gitignored)
+src/school/    Part 1: Zenodo figure targets + seirsplus v1.0 replication
+src/vineyard/  Parts 2-3, 5: grid/kernel, simulator, policies, economics, spatial stats
+src/optimize/  Part 4: policy optimization
+notebooks/     figure generation
+results/       cached sim outputs (parquet)
+figures/
+tests/
+```
