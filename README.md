@@ -8,7 +8,7 @@ https://www.pnas.org/doi/full/10.1073/pnas.2108909118.
 
 ```bash
 uv venv && source .venv/bin/activate
-uv pip install -e ".[dev,optimize]"     # add ",school" for the seirsplus replication (Part 1B)
+uv pip install -e ".[dev,optimize]"
 pytest
 ```
 
@@ -18,7 +18,7 @@ Zenodo data (10.5281/zenodo.5237328) goes in `data/` (gitignored). See `PROJECT_
 
 ```
 data/          Zenodo downloads (gitignored)
-src/school/    Part 1: Zenodo figure targets + seirsplus v1.0 replication
+src/school/    Part 1: Zenodo figure targets + vendored SEIRS+ K-12 model (seirsplus_k12/)
 src/vineyard/  Parts 2-3, 5: grid/kernel, simulator, policies, economics, spatial stats
 src/optimize/  Part 4: policy optimization
 notebooks/     figure generation

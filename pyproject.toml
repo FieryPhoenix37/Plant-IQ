@@ -18,8 +18,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Part 1B: school model replication on public SEIRS+ v1.0
-school = ["seirsplus==1.0.9"]
 # Parts 3-4: sensitivity analysis and policy optimization
 optimize = ["SALib", "optuna", "cma"]
 dev = ["pytest", "ruff", "jupyterlab"]
@@ -36,3 +34,4 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
+extend-exclude = ["src/school/seirsplus_k12"]  # vendored upstream code, kept close to original

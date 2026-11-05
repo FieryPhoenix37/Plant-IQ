@@ -17,6 +17,7 @@ This project adapts a stochastic network epidemic model built for schools to gra
 ### Caveats that shape the plan
 1. **Zenodo holds simulation output only, no code.**
 2. **The PNAS results probably came from an internal SEIRS+ v2.0.** The README says code is available from the author on request. Re-running on public v1.0 will be approximate. If v1.0 can't express something, document it, and consider emailing ryansmcgee@gmail.com for v2.0.
+   - **Update:** the authors' school model code is public on non-default branches and is now vendored in `src/school/seirsplus_k12/` (see its README for provenance, compatibility patches, and upstream bugs kept as-is). `k12-schools` @ `3deebcf` supplies `run_tti_sim(..., parameter_cadences=...)` for weekend/cohort network switching; `v2dev` @ `f66456b` supplies `generate_K5_school_contact_network` and `generate_highschool_contact_network`. No public branch supports vaccination, so the Zenodo vaccine scenarios did come from an unreleased v2; Figs. 3–5 need none of that.
 3. **Flasco et al. is a field and statistics study, not a simulation.** Its Fig. 5 roguing rules come from spatial statistics and have never been tested in simulation, so a simulation comparison is new work.
 
 ---
@@ -70,8 +71,34 @@ project/
 
 **Done when:** these panels visually match the published figures, and the ">5%" percentages match the printed values.
 
-### 1B. Re-run with seirsplus v1.0 (needed so there is a working simulator to modify)
-Start with the **primary school, Fig. 5A** condition only.
+**Implementation notes (verified against the data; code in `src/school/zenodo.py`, run `python -m school.zenodo`):**
+- Files are **comma**-separated despite the Zenodo description, with leftover pandas index columns.
+- `*_pct_*` columns are **fractions** (0–1); ">5%" is `> 0.05`.
+- No school-type, testing-arm-only, or replicate column as such: school = file; testing arm = `TESTING_PROTOCOL`; replicate = `runID` (1,000 unique per scenario).
+- Extra scenario dimensions must be pinned to the paper's baseline: `SUSCEPTIBILITY_students` = 0.6 (primary) / 1.0 (secondary), `ISOLATION_COMPLIANCE_RATE_POSITIVE_GROUPMATE` = 0, `INIT_VACCINE_UPTAKE_*` = 0.
+- Per group, in every row: endogenous = infected − introductions − 2 (students) / − 0 (teachers+staff). The seed case isn't in `introductions`, so one case too many is subtracted. Targets use the published column; `*_seedfix` variants add the case back.
+- `total_num_infected` exceeds students + teachers/staff by 0–9 infections in ~15% of runs (more with more introductions).
+- Secondary school-wide % divides by **925** (800 students + 125 teachers), while the teachers+staff % divides by 200.
+- Rows are blocks of 1,000 runs (`Unnamed: 0 // 1000`). **2,546 of 2,880 secondary scenarios have two blocks** with identical inputs and network statistics: same % of runs > 5% (within noise) but outbreak sizes up to ~2.3× apart, growing with size; the larger block holds all 72,526 counts above the population. The smaller block (complete across all scenarios) is labelled canonical and used for targets. Distinguishing check against the paper: Fig. 3B daily median ≈ 40% (canonical) vs ≈ 74% (inflated).
+
+**Part 1A results (canonical, published outcome column), % of runs > 5%:**
+
+| | single | monthly | weekly | daily |
+|---|---|---|---|---|
+| Primary, R0 1.5 | 0.7 | 6.1 | 52.8 | 100 |
+| Primary, R0 2.25 | 5.2 | 35.4 | 90.9 | 100 |
+| Secondary, R0 1.5 | 5.9 | 35.8 | 85.5 | 100 |
+| Secondary, R0 2.25 | 24.0 | 70.6 | 99.2 | 100 |
+
+Fig. 5 (R0 1.5, weekly): primary 52.8 / 8.4 / 8.3, secondary 85.5 / 37.6 / 26.2 (none / alternating days / alternating weeks). Still to do: compare with the values printed in the published figures.
+
+### 1B. Re-run with the authors' SEIRS+ K-12 code (needed so there is a working simulator to modify)
+Start with the **primary school, Fig. 5A** condition only. Use `src/school/seirsplus_k12` (not pip v1.0.9).
+
+Already established:
+- Disease periods (verified against Zenodo per-run summaries): latent gamma(3.0, CV 0.6), presymptomatic gamma(2.2, CV 0.5), (a)symptomatic gamma(4.0, CV 0.4); individual R0 gamma(mean `R0_MEAN`, CV 2.0).
+- Network sizes from the generators match the paper (528 primary, 1,000 secondary nodes).
+- Open: generator settings (e.g. `teacher_staff_degree`) give student/teacher degree ≈ 22.5 / 14.8 vs Zenodo ≈ 19.5 / 5.75. Fit them to the Zenodo `degree_*` columns; this also tests whether the published runs used the (buggy) high-school generator.
 
 1. **Network** (SI §A.2.4):
    - 480 students in classes; each class is a fully connected clique plus one teacher.
