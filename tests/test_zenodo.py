@@ -1,3 +1,4 @@
+import dataclasses
 import gzip
 
 import polars as pl
@@ -51,8 +52,16 @@ def tiny(tmp_path, monkeypatch):
         lines.append(",".join([str(i)] * 4 + [*map(str, r.values()), '"(3.0, 28.8)"']))
     with gzip.open(tmp_path / TINY.raw_file, "wt") as f:
         f.write("\n".join(lines) + "\n")
-    zenodo.extract(TINY)
-    return TINY
+    school = dataclasses.replace(TINY, md5=zenodo.md5sum(tmp_path / TINY.raw_file))
+    zenodo.extract(school)
+    return school
+
+
+def test_download_rejects_bad_checksum(tmp_path, monkeypatch):
+    monkeypatch.setattr(zenodo, "DATA_DIR", tmp_path)
+    (tmp_path / TINY.raw_file).write_bytes(b"corrupted")
+    with pytest.raises(ValueError, match="md5"):
+        zenodo.download(dataclasses.replace(TINY, md5="0" * 32))
 
 
 def test_extract_and_validate(tiny):
@@ -110,19 +119,20 @@ def test_baseline_filter():
     assert zenodo.baseline(lf, TINY).collect().height == 2
 
 
-def test_label_versions_picks_lower_block(monkeypatch):
-    """Two blocks of one scenario: the lower-mean block is canonical; single blocks are canonical."""
+def test_label_versions_uses_network_clustering(monkeypatch):
+    """Two blocks of one scenario: the higher-clustering block is canonical; single blocks are too."""
     monkeypatch.setattr(zenodo, "RUNS_PER_BLOCK", 2)
     keys = list(zenodo.SCENARIO_COLS.values())
     scen = {k: [0.0] * 6 for k in keys}
     scen["R0"] = [1.5, 1.5, 1.5, 1.5, 2.0, 2.0]  # scenario A = blocks 0 and 1, scenario B = block 2
-    lf = pl.LazyFrame({**scen, "row_idx": list(range(6)), "n_infected": [10, 12, 30, 28, 5, 6]})
+    lf = pl.LazyFrame({
+        **scen, "row_idx": list(range(6)),
+        "clustering": [0.13, 0.13, 0.16, 0.16, 0.16, 0.16],
+        "n_infected": [50, 60, 1, 2, 5, 6],  # outcomes must not influence the label
+    })
     out = zenodo.label_versions(lf).collect()
     assert out["block"].to_list() == [0, 0, 1, 1, 2, 2]
-    assert out["version"].to_list() == ["canonical"] * 2 + ["inflated"] * 2 + ["canonical"] * 2
-
-    tied = zenodo.label_versions(lf.with_columns(n_infected=pl.lit(7))).collect()
-    assert tied.filter(R0=1.5)["version"].to_list() == ["canonical"] * 2 + ["inflated"] * 2
+    assert out["version"].to_list() == ["alt_network"] * 2 + ["canonical"] * 4
 
 
 def test_pairwise_sign_and_significance():

@@ -1,6 +1,7 @@
 """Part 1A: rebuild McGee et al. 2021 (PNAS) Fig. 3-5 targets from the Zenodo output (10.5281/zenodo.5237328).
 
 Pipeline:
+    0. download():  fetch each raw file from Zenodo and verify its MD5 (skipped if already present)
     1. extract():   one streaming DuckDB pass over each multi-GB .csv.gz -> slim parquet in data/
     2. targets():   filter to the paper's baseline, summarize per figure -> results/zenodo_targets.csv
     3. school.plots draws the figures from the same parquet.
@@ -12,16 +13,17 @@ Facts about the raw files, verified against the data (not the Zenodo description
       teachers/staff. The initial seed case is not in ``total_num_introductions``, so one case too
       many is subtracted (single-seed runs show -1). We keep the published columns as the primary
       outcome and expose a seed-corrected variant (+1 case) for sensitivity.
-    - ``total_num_infected`` can exceed students + teachers/staff by 0-5 infections, more often with
+    - ``total_num_infected`` can exceed students + teachers/staff by 0-9 infections, more often with
       more introductions; the school-wide endogenous count inherits that excess.
     - The secondary school-wide percentage divides by 925 (= 800 students + 125 teachers), although
       the teachers/staff percentage divides by 200 (125 + 75). We use the denominators as published.
     - Rows come in blocks of 1,000 runs (``row_idx // 1000``). 2,546 secondary scenarios have two
-      blocks: same inputs and network statistics, same share of runs > 5% (within noise), but
-      outbreak sizes up to ~2.3x apart, growing with outbreak size. The larger block holds every
-      count above the population (up to 1,880 of 1,000). The smaller block is the complete version
-      (it also covers the 334 single-block scenarios), so it is labelled canonical and used for the
-      targets; see label_versions().
+      blocks with the same inputs but different contact networks: per-block mean clustering is
+      ~0.161 in one and ~0.129 in the other (mean degree ~24.1 vs ~25.8), with no overlap. The
+      high-clustering version covers all 2,880 scenarios and never exceeds the population; the
+      low-clustering ("alt_network") version has larger outbreaks, a slightly higher share of runs
+      > 5%, and every count above the population (up to 1,880 of 1,000). Targets use the
+      high-clustering version; see label_versions().
 
 Baseline (paper main text): student susceptibility 0.6 (primary) / 1.0 (secondary), only positive
 individuals isolated (no classroom quarantine), no vaccination.
@@ -30,6 +32,9 @@ individuals isolated (no classroom quarantine), no vaccination.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import shutil
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -156,6 +161,35 @@ OUTCOMES = {
 
 
 # --------------------------------------------------------------------------------------------
+# 0. Download
+# --------------------------------------------------------------------------------------------
+
+def md5sum(path: Path, chunk: int = 1 << 24) -> str:
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        while block := f.read(chunk):
+            h.update(block)
+    return h.hexdigest()
+
+
+def download(school: School) -> Path:
+    """Fetch the raw .csv.gz from Zenodo if missing, then verify its MD5 against the record."""
+    path = school.raw_path
+    if not path.exists():
+        DATA_DIR.mkdir(exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".part")
+        url = ZENODO_FILE_URL.format(name=school.raw_file)
+        print(f"[{school.name}] downloading {url} (several GB)")
+        with urllib.request.urlopen(url) as r, open(tmp, "wb") as f:
+            shutil.copyfileobj(r, f, length=1 << 24)
+        tmp.rename(path)
+    digest = md5sum(path)
+    if digest != school.md5:
+        raise ValueError(f"{path}: md5 {digest} != Zenodo {school.md5}; delete it and re-run")
+    return path
+
+
+# --------------------------------------------------------------------------------------------
 # 1. Extraction
 # --------------------------------------------------------------------------------------------
 
@@ -166,10 +200,7 @@ def extract(school: School, overwrite: bool = False) -> Path:
     out = school.parquet_path
     if out.exists() and not overwrite:
         return out
-    if not school.raw_path.exists():
-        raise FileNotFoundError(
-            f"{school.raw_path} missing; download from {ZENODO_FILE_URL.format(name=school.raw_file)}"
-        )
+    download(school)  # fetches if missing; always verifies the checksum before extracting
 
     select = ", ".join(f'"{raw}" AS {short}' for raw, short in {**PROVENANCE_COLS, **SCENARIO_COLS, **NETWORK_COLS, **COUNT_COLS}.items())
     tmp = out.with_suffix(".parquet.tmp")
@@ -203,22 +234,23 @@ def load(school: School) -> pl.LazyFrame:
 
 
 def label_versions(lf: pl.LazyFrame) -> pl.LazyFrame:
-    """Add ``block`` and ``version`` ("canonical" / "inflated").
+    """Add ``block``, ``block_clustering`` and ``version`` ("canonical" / "alt_network").
 
     Every primary scenario, and 334 secondary ones, has one block of 1,000 runs. The other 2,546
-    secondary scenarios have two blocks with identical inputs and networks but outbreak sizes up to
-    ~2.3x apart (the larger block holds every count above the population; the share of runs > 5% is
-    the same in both). The lower-mean block is labelled canonical (ties: lower block number). At low
-    R0 the two blocks are statistically indistinguishable, so the choice there is immaterial.
+    secondary scenarios have two blocks run on different network versions. Within a scenario the
+    block with the higher mean network clustering is canonical: that version is present in every
+    scenario. The label uses only network statistics, which are fixed before the epidemic runs, so
+    it does not select on outcomes. validate() checks that the two versions do not overlap.
     """
     keys = list(SCENARIO_COLS.values())
-    block_mean = pl.col("n_infected").mean().over("block")
     return (
         lf.with_columns(block=pl.col("row_idx") // RUNS_PER_BLOCK)
-        # Ties (2 secondary scenarios with ~1-8 mean infections) go to the lower block number.
-        .with_columns(rank=pl.struct(block_mean.alias("m"), pl.col("block")).rank("dense").over(keys))
-        .with_columns(version=pl.when(pl.col("rank") == 1).then(pl.lit("canonical")).otherwise(pl.lit("inflated")))
-        .drop("rank")
+        .with_columns(block_clustering=pl.col("clustering").mean().over("block"))
+        .with_columns(
+            version=pl.when(pl.col("block_clustering") == pl.col("block_clustering").max().over(keys))
+            .then(pl.lit("canonical"))
+            .otherwise(pl.lit("alt_network"))
+        )
     )
 
 
@@ -277,6 +309,11 @@ def validate(school: School) -> pl.DataFrame:
         )
         .collect()
     )
+    gap = lf.group_by("version").agg(lo=pl.col("block_clustering").min(), hi=pl.col("block_clustering").max()).collect()
+    if gap.height == 2:
+        c, a = (gap.filter(version=v).row(0, named=True) for v in ("canonical", "alt_network"))
+        if not a["hi"] < c["lo"]:
+            raise AssertionError(f"{school.name}: network versions overlap in clustering: {gap}")
     if not sizes["n_blocks"].is_in([1, 2]).all():
         raise AssertionError(f"{school.name}: scenarios with more than two blocks")
     bad = sizes.filter((pl.col("n") != RUNS_PER_BLOCK) | (pl.col("n_unique_runs") != RUNS_PER_BLOCK))
@@ -295,7 +332,7 @@ def anomalies(school: School) -> dict[str, int]:
     excess = pl.col("n_infected") - pl.col("n_infected_students") - pl.col("n_infected_teachers_staff")
     row = lf.select(
         rows=pl.len(),
-        inflated_rows=(pl.col("version") == "inflated").sum(),
+        alt_network_rows=(pl.col("version") == "alt_network").sum(),
         total_exceeds_groups=(excess > 0).sum(),
         max_total_excess=excess.max(),
         cumulative_exceeds_population=(
@@ -464,6 +501,11 @@ def main(argv: list[str] | None = None) -> None:
     out = RESULTS_DIR / "zenodo_targets.csv"
     targets(schools).write_csv(out, float_precision=4)
     print(f"targets -> {out}")
+
+    from . import diagnostics
+
+    for path in diagnostics.write_all(schools):
+        print(f"diagnostics -> {path}")
 
     if not args.no_figures:
         from . import plots

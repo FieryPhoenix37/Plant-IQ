@@ -4,6 +4,8 @@ data/*
 results/*
 !results/.gitkeep
 !results/zenodo_targets.csv
+!results/zenodo_anomalies.csv
+!results/zenodo_block_comparison.csv
 figures/*
 !figures/.gitkeep
 
