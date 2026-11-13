@@ -105,7 +105,19 @@ Start with the **primary school, Fig. 5A** condition only. Use `src/school/seirs
 Already established:
 - Disease periods (verified against Zenodo per-run summaries): latent gamma(3.0, CV 0.6), presymptomatic gamma(2.2, CV 0.5), (a)symptomatic gamma(4.0, CV 0.4); individual R0 gamma(mean `R0_MEAN`, CV 2.0).
 - Network sizes from the generators match the paper (528 primary, 1,000 secondary nodes).
-- Open: generator settings (e.g. `teacher_staff_degree`) give student/teacher degree ≈ 22.5 / 14.8 vs Zenodo ≈ 19.5 / 5.75. Fit them to the Zenodo `degree_*` columns; this also tests whether the published runs used the (buggy) high-school generator.
+- **Primary network calibrated (`src/school/network.py`):**
+  - `teacher_staff_degree=6` (the upstream default is 10) reproduces all 7 Zenodo network statistics. Over 200 networks, every |z| is below 0.7 and the run-to-run SDs match.
+  - The Zenodo `*_students` and `*_teachers-staff` statistics are measured on the single-group layers (`students-only`, `teacherstaff-only`), with self-loops excluded.
+  - The statistics are identical across cohorting scenarios, so they are measured on the `onsite-all` network.
+  - Both RNGs must be seeded: numpy for the generator, and the stdlib `random` module for FARZ.
+  - Still to do: the secondary generator. This also tests whether the published runs used the buggy high-school generator.
+- **Facts from the raw Zenodo columns** (first 200k primary rows):
+  - Simulation length is 150 days. `init_cadence_offset` is a uniform 0–27-day start offset into the 28-day testing/cohorting cycle.
+  - About 43 weekend days per person, which matches 150 × 2/7.
+  - No symptomatic testing, contact tracing, hospitalizations or deaths.
+  - Isolations still happen without testing: 11.8 per run, about 9.8 days each. This is symptomatic self-isolation.
+- **Not recorded in Zenodo (needs SI §A.2):** asymptomatic fraction `a`, relative asymptomatic transmissibility, how R0 maps to β, the test false-negative curve, and the isolation-network settings.
+  - Plan: fit any remaining unknowns only on the no-intervention single-introduction scenarios. Hold out the Fig. 5A cohorting arms as validation.
 
 1. **Network** (SI §A.2.4):
    - 480 students in classes; each class is a fully connected clique plus one teacher.
