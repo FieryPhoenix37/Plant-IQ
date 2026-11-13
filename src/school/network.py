@@ -18,7 +18,10 @@ run-to-run SDs match too:
     cluster_coeff_students      0.9511 (0.0039)  0.9510 (0.0042)  students-only layer
     degree_mean_teachers-staff  5.451 (0.343)    5.439 (0.354)    teacher/staff-only layer
 
-The upstream default (10) gives a teacher/staff-layer degree of 9.0. The match requires measuring without
+SI Table A.2.4a lists "teacher/staff mean degree 5", but that is FARZ's ``m`` input, not the realised
+degree. Table A.2.4b's own std 4.8 and CV^2 0.8 imply a mean of 5.4, and m=6 also matches its std,
+CV^2 and clustering (m=5 gives std 4.1 and clustering 0.44). The upstream default (10) gives a
+teacher/staff-layer degree of 9.0. The match requires measuring without
 the weight-0 self-loops that scipy ``block_diag`` leaves on student nodes (upstream bug 6 in
 ``seirsplus_k12/README.md``); with them, every student's degree is +2. The model sums adjacency weights
 for degree, so those loops do not affect transmission and the graphs are passed to it unchanged.

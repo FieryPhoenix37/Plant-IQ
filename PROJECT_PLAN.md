@@ -116,8 +116,22 @@ Already established:
   - About 43 weekend days per person, which matches 150 × 2/7.
   - No symptomatic testing, contact tracing, hospitalizations or deaths.
   - Isolations still happen without testing: 11.8 per run, about 9.8 days each. This is symptomatic self-isolation.
-- **Not recorded in Zenodo (needs SI §A.2):** asymptomatic fraction `a`, relative asymptomatic transmissibility, how R0 maps to β, the test false-negative curve, and the isolation-network settings.
-  - Plan: fit any remaining unknowns only on the no-intervention single-introduction scenarios. Hold out the Fig. 5A cohorting arms as validation.
+- **SI Appendix read (`data/paper_appendix.pdf`, gitignored). Parameters are in `src/school/params.py`, with tests against Tables A.2.2–A.2.3:**
+  - Asymptomatic: 40% of primary students, 30% of everyone else. Presymptomatic and asymptomatic people transmit as much as symptomatic ones.
+  - β_i = R0_i / (presymptomatic + symptomatic period).
+  - Draws reproduce the SI statistics: infectious period mean 6.2 / std 1.9. Individual R0 median 0.26 (R0 1.5) and 0.39 (R0 2.25); 31% / 38% above 1. The top 20% carry 80% of transmission.
+  - Introductions: Poisson per day, assigned to people in proportion to susceptibility. Introductions to non-susceptible people are no-ops.
+  - Quarantine network = household edges only, with no global transmission. The weekend network is the same, but global transmission stays at 20%.
+  - Symptomatic self-isolation: 20%, with a 1-day lag. Testing (Mon or Mon+Thu): 1-day result lag; E 0% sensitivity, presymptomatic 75% for the first 2 days then 80%.
+  - The vendored default false-negative table gives 78% after day 2, not 80%. This doesn't matter for the no-testing scenarios.
+- **SI vs our network:**
+  - Table A.2.4a lists teacher/staff mean degree "5", but that is the FARZ `m` input.
+  - Table A.2.4b's own std 4.8 and CV² 0.8 imply a mean of 4.8/√0.8 = 5.4.
+  - m = 6 reproduces A.2.4b (std 4.87, CV² 0.81, clustering 0.49, assortativity 0.44) and Zenodo (mean 5.45, std 4.84, clustering 0.486). m = 5 gives mean 4.48, std 4.14, clustering 0.44. **Keep m = 6.**
+- **Runner requirements found in code review:**
+  1. δ(ji) = (log D_i + log D_j) / (2 log D̄) is fixed from the `onsite-all` network (SI A.2.4.5). `update_parameters()` recomputes δ from whichever network is active, so pass `delta` explicitly, with `delta_pairwise_mode="mean"`.
+  2. Open: the local-transmission denominator |C_i| comes from the active network in the code. On weekends that is household size, which concentrates pressure on siblings. The SI doesn't say whether this was also fixed. Test both against Zenodo.
+- Plan: fit any remaining unknowns only on the no-intervention single-introduction scenarios. Hold out the Fig. 5A cohorting arms as validation.
 
 1. **Network** (SI §A.2.4):
    - 480 students in classes; each class is a fully connected clique plus one teacher.
