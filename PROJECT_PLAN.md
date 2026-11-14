@@ -149,14 +149,20 @@ Already established:
   | daily | 100 / 100 | 22.4 / 21.4 | sim slightly high (z 5; about 5% relative) |
 
   This uses the SI-consistent variant: a fixed onsite degree denominator and timer reset for introduced cases. The code-default variant ("active" denominator, no reset) overshoots, e.g. 69% at weekly.
-- **Hold-out, Fig. 5A cohorting (weekly introductions): NOT reproduced yet.**
-
-  | % > 5% | onsite denominator | active denominator | Zenodo |
-  |---|---|---|---|
-  | alternate days | 4.5 | 35.7 | 10.0 |
-  | alternate weeks | 4.3 | 31.3 | 9.3 |
-
-  The two denominators bracket Zenodo, so the authors' cohort-day transmission sits between "per-contact weight fixed" and "per-person pressure fixed". Next: test intermediate mechanisms against the cohorting arms, e.g. the cohort split, teacher edges, and how off-site students mix.
+- **Fig. 5A cohorting: resolved.**
+  - With δ fixed as the SI text says, cohort-arm outbreaks were about 15% smaller throughout: median 11 vs 13 school-acquired cases. The 5% threshold (26.4 cases) sits at Zenodo's 90th percentile, so % > 5% halved (4.5 vs 10.0).
+  - Ruled out:
+    - the schedule: Zenodo planned off-site person-days are 25,878, matching Fig. A3;
+    - an exact-half cohort split: 3.6%;
+    - the "active" denominator: 35.7%;
+    - "active at school / usual at home": 23.4%.
+  - **Fix: recompute δ from each day's network, as the code's `update_parameters` does (`delta_network="active"`, now the default).** With half the school away, mean degree falls (about 20 → 6.6), so present students' δ rises by about 28%.
+    - Fig. 5A % > 5%: 58.6 / 10.8 / 10.3 vs Zenodo 54.6 / 10.0 / 9.3. Medians match.
+    - Side effect: on household-only networks (weekends, off-days) the mean degree is below 1, so δ clips to 0 and siblings don't transmit locally. Global mixing continues.
+  - **Fresh validation** (new seeds; R0 1.5 and 2.25 × 4 introduction rates × 3 schedules × 1,000 runs):
+    - % > 5% is within 2 SE of Zenodo in 19 of 24 scenarios, and within 3 SE in all.
+    - **Known residual:** mean outbreak size is above Zenodo in all 18 scenarios with introductions (median +4.7%, range +1.7% to +22%). Cause not found yet. Candidates: `max_dt`, the order of isolation vs introduction within a day, and the test-free isolation timer (upstream bug 4).
+  - Conclusion: the authors' runs follow their code (δ recomputed daily), not the SI sentence in A.2.4.5.
 
 1. **Network** (SI §A.2.4):
    - 480 students in classes; each class is a fully connected clique plus one teacher.

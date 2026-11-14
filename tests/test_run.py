@@ -35,3 +35,15 @@ def test_introductions_into_a_quiet_school_progress():
     r = run_replicate(Scenario(intro="monthly"), 0)
     assert r["n_introductions"] > 0
     assert r["n_latent_at_end"] <= 2  # only cases introduced in the last few days may still be latent
+
+
+def test_delta_is_nonnegative_on_every_schedule_network():
+    import numpy as np
+
+    from school.network import build_primary_school_network
+    from school.run import _log_degree_delta
+
+    nets, _ = build_primary_school_network(0)
+    for name in ("onsite-all", "onsite-block1", "onsite-block2", "offsite-all"):
+        delta = np.clip(_log_degree_delta(nets[name]), 0, None)
+        assert np.isfinite(delta).all() and (delta >= 0).all(), name

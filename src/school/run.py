@@ -14,18 +14,25 @@ so later introductions never happen (Zenodo runs always last 150 days); (iii) ha
 into the 28-day schedule (Zenodo ``init_cadence_offset`` is uniform 0-27); (iv) does not count
 introductions, which the outcome columns need. The model and its Gillespie step are used unchanged.
 
-Model choices that the SI states but the code would not do by default:
-    - delta(ji) = (log D_i + log D_j) / (2 log mean D), fixed from the 'onsite-all' network (A.2.4.5).
-      ``update_parameters`` would recompute it from each day's network, so it is passed explicitly.
-    - quarantine network = household edges only ('offsite-all'), no global transmission (q = 0) (A.2.4.3).
+Quarantine network = household edges only ('offsite-all'), no global transmission (q = 0) (SI A.2.4.3).
 
-Two behaviours the SI does not settle, exposed as options so they can be tested against Zenodo:
+Three behaviours the SI does not settle (or states differently from the code), exposed as options and
+chosen by comparison with Zenodo (primary, R0 1.5, 1,000 runs per scenario; details in PROJECT_PLAN.md):
     - ``degree_denominator``: local pressure is divided by the susceptible person's number of contacts.
-      'active' (the code) uses the day's network, so on weekends a sibling's pressure is undiluted;
-      'onsite' (default) keeps the everyone-onsite count, like delta.
+      'onsite' (default) keeps the everyone-onsite count; 'active' (the code) uses the day's network, so
+      at home a sibling's pressure is undiluted. 'active' overshoots (weekly: 65% of runs > 5% vs 54.6%).
     - ``reset_intro_timer``: the model never resets the state timer of a person infected by an
       introduction, so mid-run introductions skip their latent period. True (default) resets it, as the SI
-      describes ("they become exposed"); False reproduces the public code.
+      describes ("they become exposed"); False reproduces the public code. Small effect; True fits better.
+    - ``delta_network``: delta(ji) = (log D_i + log D_j) / (2 log mean D). The SI (A.2.4.5) says it is
+      fixed from the 'onsite-all' network; the code's ``update_parameters`` recomputes it from each day's
+      network. 'active' (default, the code's behaviour) is the only variant tried that reproduces the
+      Fig. 5A cohorting arms (% > 5%: 10.8 / 10.3 vs Zenodo 10.0 / 9.3; 'onsite' gives 4.5 / 4.3):
+      with half the school away, mean degree falls and present students' delta rises by ~28%. Values are
+      clipped at 0: on household-only networks mean degree < 1 makes log(mean D) negative.
+      Fresh validation (R0 1.5 and 2.25 x 4 introduction rates x 3 schedules, new seeds): % > 5% within
+      2 SE of Zenodo in 19/24 scenarios and within 3 SE in all; mean outbreak size is +4.7% (median;
+      range +1.7% to +22%) above Zenodo in all 18 scenarios with introductions, cause not yet found.
 """
 
 from __future__ import annotations
@@ -58,6 +65,7 @@ class Scenario:
     params: SchoolParams = PRIMARY
     degree_denominator: str = "onsite"  # 'onsite' | 'active', see module docstring
     reset_intro_timer: bool = True
+    delta_network: str = "active"  # 'active' (code) | 'onsite' (SI text), see module docstring
     max_dt: float = 0.1  # max Gillespie step (days), so daily actions are never skipped
 
 
@@ -71,7 +79,7 @@ def _log_degree_delta(G) -> np.ndarray:
     degree = np.asarray(_adj_matrix(G).sum(axis=0), dtype=float).ravel()
     with np.errstate(divide="ignore"):
         delta = np.log(degree) / np.log(degree.mean())
-    delta[np.isneginf(delta)] = 0.0
+    delta[degree == 0] = 0.0  # no contacts, so no effect; avoids +/-inf (log 0 over a negative log mean is +inf)
     return delta
 
 
@@ -116,6 +124,8 @@ def run_replicate(scenario: Scenario, seed: int) -> dict:
         name = _network_for_day(scenario.cohorting, (offset + day) % p.cadence_cycle_days)
         if name != current_network:
             model.parameters.update({"G": nets[name]})
+            if scenario.delta_network == "active":  # clipped so propensities stay >= 0
+                model.parameters.update({"delta": np.clip(_log_degree_delta(nets[name]), 0, None)})
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 model.update_parameters()
