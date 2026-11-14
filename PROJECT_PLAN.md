@@ -132,6 +132,31 @@ Already established:
   1. δ(ji) = (log D_i + log D_j) / (2 log D̄) is fixed from the `onsite-all` network (SI A.2.4.5). `update_parameters()` recomputes δ from whichever network is active, so pass `delta` explicitly, with `delta_pairwise_mode="mean"`.
   2. Open: the local-transmission denominator |C_i| comes from the active network in the code. On weekends that is household size, which concentrates pressure on siblings. The SI doesn't say whether this was also fixed. Test both against Zenodo.
 - Plan: fit any remaining unknowns only on the no-intervention single-introduction scenarios. Hold out the Fig. 5A cohorting arms as validation.
+- **Runner (`src/school/run.py`):** our own daily loop around the unchanged model, following SI A.2.6.1. It differs from the public `run_tti_sim` in four ways:
+  - susceptibility-weighted introductions (Zenodo students' share is 85–87%, matching weighted selection at 85.7%, not uniform at 90.9%);
+  - it keeps running after the school is temporarily infection-free;
+  - a random 0–27-day schedule offset;
+  - it counts successful introductions.
+  - The seed is uniform over people (Zenodo: 90.9% students at every susceptibility level).
+  - Bug found and fixed: the "skip idle day" check read stored counts, so cases introduced into an infection-free school never progressed. A regression test is in `tests/test_run.py`.
+- **Calibration** (primary, R0 1.5, all on site, no testing; 1,000 runs each; outcome = Zenodo `*_seedfix`):
+
+  | Introductions | % > 5% sim / Zenodo | Mean % sim / Zenodo | Verdict |
+  |---|---|---|---|
+  | single | 1.0 / 0.9 | 0.38 / 0.33 | match (KS p 0.91) |
+  | monthly | 8.7 / 6.8 | 1.97 / 1.77 | borderline (z 1.6; MWU p 0.03) |
+  | weekly | 57.1 / 54.6 | 6.21 / 6.03 | match (KS p 0.29) |
+  | daily | 100 / 100 | 22.4 / 21.4 | sim slightly high (z 5; about 5% relative) |
+
+  This uses the SI-consistent variant: a fixed onsite degree denominator and timer reset for introduced cases. The code-default variant ("active" denominator, no reset) overshoots, e.g. 69% at weekly.
+- **Hold-out, Fig. 5A cohorting (weekly introductions): NOT reproduced yet.**
+
+  | % > 5% | onsite denominator | active denominator | Zenodo |
+  |---|---|---|---|
+  | alternate days | 4.5 | 35.7 | 10.0 |
+  | alternate weeks | 4.3 | 31.3 | 9.3 |
+
+  The two denominators bracket Zenodo, so the authors' cohort-day transmission sits between "per-contact weight fixed" and "per-person pressure fixed". Next: test intermediate mechanisms against the cohorting arms, e.g. the cohort split, teacher edges, and how off-site students mix.
 
 1. **Network** (SI §A.2.4):
    - 480 students in classes; each class is a fully connected clique plus one teacher.
