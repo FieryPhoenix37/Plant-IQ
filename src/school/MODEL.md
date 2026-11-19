@@ -147,28 +147,183 @@ infect each other at home. School-wide mixing still runs on those days.
 
 ---
 
-## 5. How good the fit is
+## 5. Differences from the paper and SI, and why we made them
 
-Fresh validation: R0 1.5 and 2.25 × 4 introduction rates × 3 schedules (24 scenarios), new seeds,
-1,000 runs each, compared with Zenodo.
+The equations in section 1 have the same form as the SI. This section lists where our implementation
+differs from, or adds to, the SI text. It also records the error that forced the main change, and how
+the cause was found. Commits: `7614937` (first runner, SI as written) and `5b512cd` (fix).
 
-| Check | Result |
-|---|---|
-| % of runs > 5% endogenous | within 2 SE in 19/24 scenarios, within 3 SE in 24/24 |
-| Distribution shape (KS test) | p > 0.05 in 15/24 |
-| Mean outbreak size | +4.7% above Zenodo (median; range +1.7% to +22%) in all 18 scenarios with introductions. **Cause not yet found** |
+### Summary of differences
 
-Fig. 5A (primary, R0 1.5, weekly introductions, % of runs > 5%):
+| Item | SI says | We do | Kind | Why |
+|---|---|---|---|---|
+| $\delta$ network | Computed once from the everyone-onsite network (A.2.4.5) | Recomputed from each day's network | **Contradicts the SI** | Only option that reproduces Fig. 5A cohorting; matches the authors' code |
+| $D_i$ (local-pressure denominator) | $\lvert C^{(i)}_G \rvert$; network on weekend and cohort days not stated | Fixed everyone-onsite count | Fills a gap | Day's count overshoots (weekly: 65–69% vs 54.6% of runs > 5%) |
+| $\delta$ for people with no contacts | Not covered (log 0 undefined) | 0, as the code does | Fills a gap | Avoids infinite rates on household-only networks |
+| Negative $\delta$ | Not covered | Clipped at 0 | Fills a gap | $\overline{D} < 1$ at home makes $\log\overline{D} < 0$, so rates would go negative |
+| $\bar\beta$ | Mean transmissibility "of infectious individuals" | Mean of $\beta$ over all people, as the code does | Possible difference | Follows the code that produced the published runs |
+| Latent period of introduced cases | Introduced people "become exposed" | Latent timer restarts | Fills a gap (the code never restarts it) | Small effect; fits Zenodo slightly better |
+| Gillespie step cap | "a fraction of a day" | 0.1 day | Fills a gap | Daily actions are never skipped |
+| Run length, start offset, seed case | Not stated | 150 days; uniform 0–27-day offset; 1 exposed, chosen uniformly | Taken from Zenodo | Read directly from the authors' run data |
+| Daily loop | Not specified as code | Our own loop, not the public `run_tti_sim` | Implementation | The public loop draws introductions uniformly, stops when the school is infection-free, has no schedule offset and does not count introductions; Zenodo shows the authors' runs did all four differently |
 
-| Schedule | Ours | Zenodo |
+### The error: cohorting outbreaks too small
+
+The first runner (`7614937`) followed the SI text, with $\delta$ fixed from the everyone-onsite network.
+It was calibrated only on all-onsite scenarios. The Fig. 5A cohorting arms were held out as an
+independent test.
+
+Calibration matched (% of runs > 5%, ours / Zenodo): single 1.0 / 0.9, monthly 8.7 / 6.8, weekly
+57.1 / 54.6, daily 100 / 100. The hold-out failed:
+
+| Fig. 5A arm | Ours, SI $\delta$ | Zenodo |
 |---|---|---|
-| All on site | 58.6 | 54.6 |
-| Alternate days | 10.8 | 10.0 |
-| Alternate weeks | 10.3 | 9.3 |
+| Alternate days | 4.5 | 10.0 |
+| Alternate weeks | 4.3 | 9.3 |
+
+Cohort-arm outbreaks were about 15% smaller throughout (median 11 vs 13 school-acquired cases). The
+5% threshold (26.4 cases) sits near Zenodo's 90th percentile, so a 15% shift roughly halved the share
+of runs above it.
+
+### Finding the cause
+
+| Possible cause | Test | Alternate days, % > 5% (Zenodo 10.0) |
+|---|---|---|
+| Wrong schedule | Zenodo off-site person-days vs Fig. A3 | Matched (25,878), so ruled out |
+| Uneven cohort split | Exact half split | 3.6 |
+| Day's contact count as $D_i$ | `degree_denominator="active"` | 35.7 |
+| Day's count at school, onsite count at home | Mixed denominator | 23.4 |
+| **$\delta$ recomputed daily** | `delta_network="active"` | **10.8** |
+
+**Mechanism.** On a cohort day half the students are home, so the school network's mean degree falls
+from about 20 to about 6.6. Because $\delta_i = \log D_i / \log \overline{D}$, a smaller
+$\overline{D}$ raises each present student's $\delta$ by about 28%. Each contact then transmits more. A
+fixed $\delta$ never gets this boost.
+
+**Why we think the authors did this.** `ExtSEIRSNetworkModel.update_parameters` (`models.py:2151`)
+recomputes $\delta$ from the current network unless a fixed $\delta$ is passed in. The authors' loop
+switches networks through it (`sim_loops.py:95`). Their run scripts are not public, but only the
+recomputed version reproduces their published numbers. So the published results most likely follow
+the code, not the sentence in SI A.2.4.5.
+
+### What we changed
+
+1. Added `Scenario.delta_network`, default `"active"`: on each network switch, recompute $\delta$ from that
+   network and clip it at 0. The SI version stays available as `"onsite"`.
+2. Set $\delta = 0$ for people with no contacts (it was infinite on household-only networks). Results were
+   unchanged on 20 replicates.
+3. Added a test that $\delta$ is finite and non-negative on all four networks (`tests/test_run.py`).
+
+Result, Fig. 5A % > 5%: 58.6 / 10.8 / 10.3 vs Zenodo 54.6 / 10.0 / 9.3. Medians match.
+
+### Remaining error and caveats
+
+- The fix was chosen by testing options against the Fig. 5A hold-out, so Fig. 5A is no longer an
+  independent test. The fresh 24-scenario validation in section 6 uses new seeds to check it.
+- Side effect: on weekends and off-days $\delta$ clips to 0, so siblings do not infect each other at home.
+  School-wide mixing continues on those days.
+- Mean outbreak size is still about 3–4% above Zenodo (median +3.0%, 17 of 18 scenarios with
+  introductions; section 6). The cause is not found. Candidates: `max_dt`, the order of isolation and introductions within a day,
+  and the isolation timer when there is no testing (upstream bug 4).
 
 ---
 
-## 6. Carrying this to the vineyard (Part 2)
+## 6. How good the fit is
+
+Fresh validation: R0 1.5 and 2.25 × 4 introduction rates × 3 schedules (24 scenarios), 1,000 runs
+each with default `Scenario` options, compared with the authors' 1,000 Zenodo runs per scenario (no
+testing, baseline filters, outcome `frac_endo_seedfix`). Seeds 3,000,000–3,000,999
+(`run_scenario(..., first_seed=3_000_000)`), run 2026-11-18. Outbreak size = school-acquired infections
+as % of the school (528 people); pp = percentage points.
+
+### Mean errors
+
+| Measure | All 24 | 18 with introductions | 6 single-seed |
+|---|---|---|---|
+| Mean outbreak size: mean signed relative error | +3.6% | **+4.0%** | +2.4% |
+| Mean outbreak size: median relative error | +3.0% | **+3.0%** | +4.6% |
+| Mean outbreak size: mean absolute relative error | 5.6% | 4.0% | 10.4% |
+| Mean outbreak size: mean absolute difference | 0.23 pp | 0.30 pp | 0.05 pp |
+| Mean outbreak size: range of relative error | −18.3% to +15.2% | −0.1% to +14.9% | −18.3% to +15.2% |
+| % of runs > 5%: mean absolute difference | **0.82 pp** | 0.98 pp | 0.33 pp |
+| % of runs > 5%: mean signed difference | +0.74 pp | +0.98 pp | +0.03 pp |
+| % of runs > 5%: mean \|z\| | 0.78 | 0.80 | 0.72 |
+| Median: mean absolute difference | 0.20 pp | 0.27 pp | 0.00 pp |
+| 95th percentile: mean absolute difference | 0.41 pp | 0.46 pp | 0.28 pp |
+
+### Checks
+
+| Check | This run | Earlier run (commit `5b512cd`, different seeds) |
+|---|---|---|
+| % of runs > 5% within 2 SE | **23/24** | 19/24 |
+| % of runs > 5% within 3 SE | 24/24 | 24/24 |
+| Distribution shape (KS p > 0.05) | 18/24 | 15/24 |
+| Mean size above Zenodo, scenarios with introductions | 17/18 | 18/18 |
+| Median relative mean-size error | +3.0% | +4.7% |
+
+### Per scenario
+
+| R0 | Schedule | Intros | Mean %, ours / Zenodo | Rel. error | % > 5%, ours / Zenodo | z | KS p |
+|---|---|---|---|---|---|---|---|
+| 1.5 | all on site | single | 0.351 / 0.326 | +7.7% | 0.7 / 0.9 | −0.50 | 0.99 |
+| 1.5 | all on site | monthly | 1.854 / 1.771 | +4.7% | 8.0 / 6.8 | +1.03 | 0.37 |
+| 1.5 | all on site | weekly | 6.297 / 6.029 | +4.5% | 58.9 / 54.6 | +1.94 | 0.18 |
+| 1.5 | all on site | daily | 21.996 / 21.401 | +2.8% | 100 / 100 | 0 | 0.005 |
+| 1.5 | alt. days | single | 0.145 / 0.143 | +1.5% | 0.0 / 0.1 | −1.00 | 1.00 |
+| 1.5 | alt. days | monthly | 0.829 / 0.817 | +1.5% | 0.8 / 0.7 | +0.26 | 0.95 |
+| 1.5 | alt. days | weekly | 2.852 / 2.774 | +2.8% | 11.6 / 10.0 | +1.15 | 0.34 |
+| 1.5 | alt. days | daily | 11.927 / 11.604 | +2.8% | 100 / 99.6 | +2.00 | 0.048 |
+| 1.5 | alt. weeks | single | 0.123 / 0.130 | −5.7% | 0.1 / 0.1 | 0 | 1.00 |
+| 1.5 | alt. weeks | monthly | 0.817 / 0.776 | +5.2% | 1.2 / 0.8 | +0.90 | 0.98 |
+| 1.5 | alt. weeks | weekly | 2.750 / 2.683 | +2.5% | 10.0 / 9.3 | +0.53 | 0.24 |
+| 1.5 | alt. weeks | daily | 11.439 / 10.900 | +4.9% | 99.8 / 99.3 | +1.67 | <0.001 |
+| 2.25 | all on site | single | 1.183 / 1.037 | +14.1% | 6.3 / 5.3 | +0.96 | 0.98 |
+| 2.25 | all on site | monthly | 5.416 / 5.212 | +3.9% | 36.3 / 36.2 | +0.05 | 0.91 |
+| 2.25 | all on site | weekly | 15.923 / 14.647 | +8.7% | 93.3 / 91.8 | +1.28 | 0.001 |
+| 2.25 | all on site | daily | 36.736 / 36.276 | +1.3% | 100 / 100 | 0 | 0.31 |
+| 2.25 | alt. days | single | 0.346 / 0.300 | +15.2% | 0.8 / 0.7 | +0.26 | 0.20 |
+| 2.25 | alt. days | monthly | 1.846 / 1.607 | +14.9% | 7.4 / 6.3 | +0.97 | 0.043 |
+| 2.25 | alt. days | weekly | 5.835 / 5.841 | −0.1% | 51.5 / 49.9 | +0.72 | 0.89 |
+| 2.25 | alt. days | daily | 19.477 / 18.899 | +3.1% | 100 / 100 | 0 | 0.002 |
+| 2.25 | alt. weeks | single | 0.258 / 0.316 | −18.3% | 0.4 / 1.0 | −1.61 | 0.99 |
+| 2.25 | alt. weeks | monthly | 1.710 / 1.661 | +2.9% | 7.4 / 7.3 | +0.09 | 0.86 |
+| 2.25 | alt. weeks | weekly | 5.381 / 5.191 | +3.7% | 47.3 / 43.3 | +1.80 | 0.26 |
+| 2.25 | alt. weeks | daily | 18.399 / 18.095 | +1.7% | 100 / 100 | 0 | 0.087 |
+
+### Fig. 5A
+
+Primary, R0 1.5, weekly introductions, % of runs > 5%:
+
+| Schedule | This run | Earlier run | Zenodo |
+|---|---|---|---|
+| All on site | 58.9 | 58.6 | 54.6 |
+| Alternate days | 11.6 | 10.8 | 10.0 |
+| Alternate weeks | 10.0 | 10.3 | 9.3 |
+
+### Reading the results
+
+- The paper's headline measure, % of runs > 5%, is reproduced. The mean absolute error is under
+  1 pp, and every scenario is within 3 SE.
+- Mean outbreak size is slightly too high: 17 of 18 scenarios with introductions are above Zenodo,
+  with a median of +3.0%. The consistent sign shows this is a real bias, not noise. **Cause not yet found.**
+- The KS failures (p < 0.05) are in daily-introduction scenarios plus R0 2.25 all on site weekly
+  (+8.7%, the worst case with introductions) and R0 2.25 alternate days monthly. They are mostly where
+  outbreaks are large, which points to a small per-day transmission excess rather than a difference in
+  how outbreaks start.
+- Single-seed relative errors (−18% to +15%) are noise. Their outbreaks average 0.1–1% of the school,
+  so one case changes the relative error a lot. Their absolute error averages 0.05 pp.
+
+### Inputs
+
+The equation inputs were checked against the SI and Zenodo as well:
+- Per-person draws (200,000 people): all within 2.4% of SI Tables A.2.2–A.2.3. The largest gaps are the
+  share of $R_{0,i} > 1$ at R0 1.5 (31.8% vs 31%) and the infectious-period SD (1.94 vs 1.9 days).
+- Network (100 networks): all seven statistics within 0.5% of Zenodo (largest: teacher/staff degree
+  5.48 vs 5.45), and within 0.14 run-to-run SD.
+
+---
+
+## 7. Carrying this to the vineyard (Part 2)
 
 The Zenodo match shows the simulator is implemented correctly. It does not show that any of the values
 above suit vines. Part 2 keeps the model's structure but replaces its network and its numbers.
@@ -258,7 +413,7 @@ The SI and the model code also handle $\delta$ differently when the network chan
   the current network's degrees whenever no fixed $\delta$ is passed in. The authors' simulation loop
   switches networks by calling `update_parameters` (`sim_loops.py:95`). So unless their run scripts
   (not public) passed a fixed $\delta$, it was recomputed on every switch.
-- Our runs reproduce the published cohorting results only with the recomputed version (section 4).
+- Our runs reproduce the published cohorting results only with the recomputed version (sections 4 and 5).
   This suggests the published numbers used it.
 
 For vines, the question is whether a vine with more neighbours should lose less than proportional
